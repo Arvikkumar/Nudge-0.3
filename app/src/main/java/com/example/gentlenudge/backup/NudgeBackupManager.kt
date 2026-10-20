@@ -92,7 +92,8 @@ data class BackupValidationResult(
     val timeGoalRecords: List<TimeGoalRecord> = emptyList(),
     val monthColors: List<TimeGoalMonthColor> = emptyList(),
     val preferences: Map<String, Any?> = emptyMap(),
-    val attachmentEntries: Map<String, ByteArray> = emptyMap()
+    val attachmentEntries: Map<String, ByteArray> = emptyMap(),
+    val legacyGoalIds: Set<Long> = emptySet()
 )
 
 object NudgeBackupManager {
@@ -990,6 +991,7 @@ object NudgeBackupManager {
 
             val goalsArray = payloadJson.optJSONArray("timeGoals") ?: JSONArray()
             val parsedGoals = mutableListOf<TimeGoal>()
+            val legacyGoalIds = mutableSetOf<Long>()
             for (i in 0 until goalsArray.length()) {
                 val obj = goalsArray.getJSONObject(i)
                 val name = obj.optString("name", "")
@@ -1002,6 +1004,7 @@ object NudgeBackupManager {
                 }
                 val explicitYm = obj.optString("yearMonth", "")
                 val startDate = obj.optString("startDate", "")
+                val isLegacy = explicitYm.isBlank()
                 val resolvedYm = if (explicitYm.isNotBlank()) {
                     explicitYm
                 } else if (startDate.length >= 7) {
@@ -1009,9 +1012,13 @@ object NudgeBackupManager {
                 } else {
                     ""
                 }
+                val goalId = obj.optLong("id", 0L)
+                if (isLegacy && goalId != 0L) {
+                    legacyGoalIds.add(goalId)
+                }
                 parsedGoals.add(
                     TimeGoal(
-                        id = obj.optLong("id", 0L),
+                        id = goalId,
                         name = name,
                         dailyTargetMinutes = dailyTarget,
                         colorHex = obj.optString("colorHex", "#7C4DFF"),
@@ -1073,7 +1080,8 @@ object NudgeBackupManager {
                 timeGoalRecords = parsedRecords,
                 monthColors = parsedMonthColors,
                 preferences = prefsMap,
-                attachmentEntries = attachmentEntries
+                attachmentEntries = attachmentEntries,
+                legacyGoalIds = legacyGoalIds
             )
         } catch (e: Exception) {
             BackupValidationResult(
@@ -1165,7 +1173,82 @@ object NudgeBackupManager {
             com.example.gentlenudge.notification.NudgeAlarmScheduler.cancelTask(context, task.id)
         }
 
-        // 4. Atomically perform Room database updates inside a transaction
+        // 4. For legacy goals (without explicit yearMonth in backup JSON, e.g. schemaVersion < 8),
+        // ensure pursuits with records spanning multiple months are represented in each active month.
+        val restoredGoals = validation.timeGoals.toMutableList()
+        val restoredRecords = validation.timeGoalRecords.toMutableList()
+        val restoredMonthColors = validation.monthColors.toMutableList()
+
+        if (validation.legacyGoalIds.isNotEmpty() || (validation.manifest?.schemaVersion ?: CURRENT_SCHEMA_VERSION) < 8) {
+            val legacyIds = if (validation.legacyGoalIds.isNotEmpty()) {
+                validation.legacyGoalIds
+            } else {
+                validation.timeGoals.map { it.id }.toSet()
+            }
+
+            var nextGoalId = (restoredGoals.map { it.id } + listOf(0L)).maxOrNull()!! + 1L
+
+            // For each legacy goal, check if records exist in months other than its base month
+            for (goal in validation.timeGoals) {
+                if (goal.id in legacyIds) {
+                    val goalRecords = restoredRecords.filter { it.goalId == goal.id }
+                    val recordMonths = goalRecords.mapNotNull {
+                        if (it.date.length >= 7) it.date.substring(0, 7) else null
+                    }
+                    val colorMonths = restoredMonthColors.filter { it.goalId == goal.id }.map { it.yearMonth }
+                    val activeMonths = (recordMonths + colorMonths).distinct()
+
+                    val baseMonth = if (goal.yearMonth.isNotBlank()) {
+                        goal.yearMonth
+                    } else if (goal.startDate.length >= 7) {
+                        goal.startDate.substring(0, 7)
+                    } else if (activeMonths.isNotEmpty()) {
+                        val firstMonth = activeMonths.first()
+                        val idx = restoredGoals.indexOfFirst { it.id == goal.id }
+                        if (idx >= 0) {
+                            restoredGoals[idx] = restoredGoals[idx].copy(
+                                yearMonth = firstMonth,
+                                startDate = if (goal.startDate.isBlank()) "$firstMonth-01" else goal.startDate
+                            )
+                        }
+                        firstMonth
+                    } else {
+                        ""
+                    }
+
+                    // For any month that has records or month colors but is not baseMonth, clone the pursuit for that month
+                    for (month in activeMonths) {
+                        if (month.isNotBlank() && month != baseMonth) {
+                            val clonedId = nextGoalId++
+                            val clonedGoal = goal.copy(
+                                id = clonedId,
+                                yearMonth = month,
+                                startDate = if (goal.startDate.length >= 7 && goal.startDate.substring(0, 7) == month) goal.startDate else "$month-01"
+                            )
+                            restoredGoals.add(clonedGoal)
+
+                            // Re-point the records in this month to the cloned pursuit
+                            for (i in restoredRecords.indices) {
+                                val r = restoredRecords[i]
+                                if (r.goalId == goal.id && r.date.startsWith(month)) {
+                                    restoredRecords[i] = r.copy(goalId = clonedId)
+                                }
+                            }
+
+                            // Re-point any month colors for this goal & month
+                            for (i in restoredMonthColors.indices) {
+                                val mc = restoredMonthColors[i]
+                                if (mc.goalId == goal.id && mc.yearMonth == month) {
+                                    restoredMonthColors[i] = mc.copy(goalId = clonedId)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Atomically perform Room database updates inside a transaction
         database.withTransaction {
             val taskDao = database.nudgeTaskDao()
             val goalDao = database.timeGoalDao()
@@ -1180,14 +1263,14 @@ object NudgeBackupManager {
             if (normalizedTasks.isNotEmpty()) {
                 taskDao.insertAll(normalizedTasks)
             }
-            if (validation.timeGoals.isNotEmpty()) {
-                goalDao.insertAllGoals(validation.timeGoals)
+            if (restoredGoals.isNotEmpty()) {
+                goalDao.insertAllGoals(restoredGoals)
             }
-            if (validation.monthColors.isNotEmpty()) {
-                goalDao.insertAllMonthColors(validation.monthColors)
+            if (restoredMonthColors.isNotEmpty()) {
+                goalDao.insertAllMonthColors(restoredMonthColors)
             }
-            if (validation.timeGoalRecords.isNotEmpty()) {
-                goalDao.insertAllRecords(validation.timeGoalRecords)
+            if (restoredRecords.isNotEmpty()) {
+                goalDao.insertAllRecords(restoredRecords)
             }
         }
 

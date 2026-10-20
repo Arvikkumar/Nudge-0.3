@@ -682,5 +682,458 @@ class TimeGoalMonthScopingTest {
             octGoals.any { it.name == "Exercise" }
         )
     }
+
+    @Test
+    fun testLegacyMultiMonthPursuit_deletionIsolation_deletingOctoberPursuitPreservesAugustAndSeptember() = runBlocking {
+        // Setup legacy backup with "Exercise" spanning Aug/Sep/Oct and "Grammar Course" in Oct
+        val backupJson = JSONObject().apply {
+            put("tasks", JSONArray())
+            val goalsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("id", 1L)
+                    put("name", "Exercise")
+                    put("dailyTargetMinutes", 30)
+                    put("colorHex", "#4CAF50")
+                    put("iconName", "fitness")
+                    put("startDate", "2026-08-01")
+                    put("isArchived", false)
+                    put("createdAt", 1722470400000L)
+                    put("orderIndex", 0)
+                })
+                put(JSONObject().apply {
+                    put("id", 2L)
+                    put("name", "Grammar Course")
+                    put("dailyTargetMinutes", 60)
+                    put("colorHex", "#7C4DFF")
+                    put("iconName", "book")
+                    put("startDate", "2026-10-01")
+                    put("yearMonth", "2026-10")
+                    put("isArchived", false)
+                    put("createdAt", 1727740800000L)
+                    put("orderIndex", 1)
+                })
+            }
+            put("timeGoals", goalsArr)
+
+            val recordsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("id", 101L)
+                    put("goalId", 1L)
+                    put("date", "2026-08-15")
+                    put("actualMinutes", 30)
+                    put("note", "August workout")
+                    put("updatedAt", 1723723200000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 102L)
+                    put("goalId", 1L)
+                    put("date", "2026-09-15")
+                    put("actualMinutes", 35)
+                    put("note", "September workout")
+                    put("updatedAt", 1726401600000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 103L)
+                    put("goalId", 1L)
+                    put("date", "2026-10-15")
+                    put("actualMinutes", 40)
+                    put("note", "October workout")
+                    put("updatedAt", 1729000000000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 104L)
+                    put("goalId", 2L)
+                    put("date", "2026-10-20")
+                    put("actualMinutes", 60)
+                    put("note", "Lesson 1")
+                    put("updatedAt", 1729432000000L)
+                })
+            }
+            put("timeGoalRecords", recordsArr)
+            put("timeGoalMonthColors", JSONArray())
+            put("preferences", JSONObject())
+        }
+
+        val payloadBytes = backupJson.toString().toByteArray(Charsets.UTF_8)
+        val digest = MessageDigest.getInstance("SHA-256")
+        val checksum = digest.digest(payloadBytes).joinToString("") { "%02x".format(it) }
+
+        val manifest = JSONObject().apply {
+            put("formatVersion", NudgeBackupManager.BACKUP_FORMAT_VERSION)
+            put("app", NudgeBackupManager.APP_IDENTIFIER)
+            put("schemaVersion", 7)
+            put("timestamp", System.currentTimeMillis())
+            put("payloadChecksum", checksum)
+            put("tasksCount", 0)
+            put("timeGoalsCount", 2)
+            put("timeGoalRecordsCount", 4)
+            put("attachmentsCount", 0)
+        }
+
+        val byteOut = ByteArrayOutputStream()
+        ZipOutputStream(byteOut).use { zos ->
+            zos.putNextEntry(ZipEntry(NudgeBackupManager.MANIFEST_ENTRY_NAME))
+            zos.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry(NudgeBackupManager.PAYLOAD_ENTRY_NAME))
+            zos.write(payloadBytes)
+            zos.closeEntry()
+        }
+
+        val validation = NudgeBackupManager.validateBackupBytes(byteOut.toByteArray())
+        val prefs = context.getSharedPreferences("test_isolation_prefs", Context.MODE_PRIVATE)
+        NudgeBackupManager.restoreValidatedBackup(context, validation, db, prefs)
+
+        // 1. Initial verification: October has both Grammar Course and Exercise
+        val octGoalsInitial = dao.getActiveGoalsForMonth("2026-10").first()
+        assertEquals(2, octGoalsInitial.size)
+        val grammarGoal = octGoalsInitial.first { it.name == "Grammar Course" }
+        val octExerciseGoal = octGoalsInitial.first { it.name == "Exercise" }
+
+        // 2. Delete October's "Grammar Course" via repository
+        repository.deleteTimeGoal(grammarGoal)
+
+        // Confirm Grammar Course is removed from October, Exercise still present
+        val octGoalsAfterGrammarDelete = dao.getActiveGoalsForMonth("2026-10").first()
+        assertEquals(1, octGoalsAfterGrammarDelete.size)
+        assertEquals("Exercise", octGoalsAfterGrammarDelete[0].name)
+
+        // Confirm August and September still have Exercise intact with their records
+        val augGoals = dao.getActiveGoalsForMonth("2026-08").first()
+        assertEquals(1, augGoals.size)
+        assertEquals("Exercise", augGoals[0].name)
+        val augRecords = dao.getRecordsForMonth("2026-08").first()
+        assertEquals(1, augRecords.size)
+        assertEquals(30, augRecords[0].actualMinutes)
+
+        val sepGoals = dao.getActiveGoalsForMonth("2026-09").first()
+        assertEquals(1, sepGoals.size)
+        assertEquals("Exercise", sepGoals[0].name)
+        val sepRecords = dao.getRecordsForMonth("2026-09").first()
+        assertEquals(1, sepRecords.size)
+        assertEquals(35, sepRecords[0].actualMinutes)
+
+        // 3. Delete October's "Exercise" via repository
+        repository.deleteTimeGoal(octExerciseGoal)
+
+        // Confirm October now has NO active pursuits
+        val octGoalsAfterExerciseDelete = dao.getActiveGoalsForMonth("2026-10").first()
+        assertTrue(octGoalsAfterExerciseDelete.isEmpty())
+
+        // Confirm August and September Exercise and records STILL remain intact (isolated deletion)
+        val augGoalsFinal = dao.getActiveGoalsForMonth("2026-08").first()
+        assertEquals(1, augGoalsFinal.size)
+        assertEquals("Exercise", augGoalsFinal[0].name)
+        val augRecordsFinal = dao.getRecordsForMonth("2026-08").first()
+        assertEquals(1, augRecordsFinal.size)
+        assertEquals("August workout", augRecordsFinal[0].note)
+
+        val sepGoalsFinal = dao.getActiveGoalsForMonth("2026-09").first()
+        assertEquals(1, sepGoalsFinal.size)
+        assertEquals("Exercise", sepGoalsFinal[0].name)
+        val sepRecordsFinal = dao.getRecordsForMonth("2026-09").first()
+        assertEquals(1, sepRecordsFinal.size)
+        assertEquals("September workout", sepRecordsFinal[0].note)
+    }
+
+    @Test
+    fun testModernBackupRestore_preservesDataWithoutDuplicationOrIdReassignment() = runBlocking {
+        // Modern backup with schemaVersion = 8 and explicit yearMonth
+        val backupJson = JSONObject().apply {
+            put("tasks", JSONArray())
+            val goalsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("id", 10L)
+                    put("name", "August Swimming")
+                    put("dailyTargetMinutes", 45)
+                    put("colorHex", "#00BCD4")
+                    put("iconName", "fitness")
+                    put("startDate", "2026-08-01")
+                    put("yearMonth", "2026-08")
+                    put("isArchived", false)
+                    put("createdAt", 1722470400000L)
+                    put("orderIndex", 0)
+                })
+                put(JSONObject().apply {
+                    put("id", 20L)
+                    put("name", "October Coding")
+                    put("dailyTargetMinutes", 120)
+                    put("colorHex", "#FF5722")
+                    put("iconName", "code")
+                    put("startDate", "2026-10-01")
+                    put("yearMonth", "2026-10")
+                    put("isArchived", false)
+                    put("createdAt", 1727740800000L)
+                    put("orderIndex", 1)
+                })
+            }
+            put("timeGoals", goalsArr)
+
+            val recordsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("id", 101L)
+                    put("goalId", 10L)
+                    put("date", "2026-08-10")
+                    put("actualMinutes", 45)
+                    put("note", "Freestyle drills")
+                    put("updatedAt", 1723300000000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 102L)
+                    put("goalId", 20L)
+                    put("date", "2026-10-15")
+                    put("actualMinutes", 120)
+                    put("note", "Kotlin coroutines")
+                    put("updatedAt", 1729000000000L)
+                })
+            }
+            put("timeGoalRecords", recordsArr)
+
+            val monthColorsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("goalId", 10L)
+                    put("yearMonth", "2026-08")
+                    put("colorHex", "#00BCD4")
+                    put("updatedAt", 1722470400000L)
+                })
+                put(JSONObject().apply {
+                    put("goalId", 20L)
+                    put("yearMonth", "2026-10")
+                    put("colorHex", "#FF5722")
+                    put("updatedAt", 1727740800000L)
+                })
+            }
+            put("timeGoalMonthColors", monthColorsArr)
+            put("preferences", JSONObject())
+        }
+
+        val payloadBytes = backupJson.toString().toByteArray(Charsets.UTF_8)
+        val digest = MessageDigest.getInstance("SHA-256")
+        val checksum = digest.digest(payloadBytes).joinToString("") { "%02x".format(it) }
+
+        val manifest = JSONObject().apply {
+            put("formatVersion", NudgeBackupManager.BACKUP_FORMAT_VERSION)
+            put("app", NudgeBackupManager.APP_IDENTIFIER)
+            put("schemaVersion", NudgeBackupManager.CURRENT_SCHEMA_VERSION)
+            put("timestamp", System.currentTimeMillis())
+            put("payloadChecksum", checksum)
+            put("tasksCount", 0)
+            put("timeGoalsCount", 2)
+            put("timeGoalRecordsCount", 2)
+            put("attachmentsCount", 0)
+        }
+
+        val byteOut = ByteArrayOutputStream()
+        ZipOutputStream(byteOut).use { zos ->
+            zos.putNextEntry(ZipEntry(NudgeBackupManager.MANIFEST_ENTRY_NAME))
+            zos.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry(NudgeBackupManager.PAYLOAD_ENTRY_NAME))
+            zos.write(payloadBytes)
+            zos.closeEntry()
+        }
+
+        val validation = NudgeBackupManager.validateBackupBytes(byteOut.toByteArray())
+        val prefs = context.getSharedPreferences("test_modern_prefs", Context.MODE_PRIVATE)
+        NudgeBackupManager.restoreValidatedBackup(context, validation, db, prefs)
+
+        // Verify goals count, IDs, and yearMonth
+        val allGoalsInDb = dao.getAllGoalsList()
+        assertEquals("Modern backup must not produce duplicate goals", 2, allGoalsInDb.size)
+        val g10 = allGoalsInDb.first { it.id == 10L }
+        assertEquals("August Swimming", g10.name)
+        assertEquals("2026-08", g10.yearMonth)
+
+        val g20 = allGoalsInDb.first { it.id == 20L }
+        assertEquals("October Coding", g20.name)
+        assertEquals("2026-10", g20.yearMonth)
+
+        // Verify records preserve exact goalId and values
+        val allRecordsInDb = dao.getAllRecordsList()
+        assertEquals(2, allRecordsInDb.size)
+        val r101 = allRecordsInDb.first { it.id == 101L }
+        assertEquals(10L, r101.goalId)
+        assertEquals(45, r101.actualMinutes)
+        assertEquals("Freestyle drills", r101.note)
+
+        val r102 = allRecordsInDb.first { it.id == 102L }
+        assertEquals(20L, r102.goalId)
+        assertEquals(120, r102.actualMinutes)
+        assertEquals("Kotlin coroutines", r102.note)
+
+        // Verify month colors preserve exact goalId
+        val allColorsInDb = dao.getAllMonthColorsList()
+        assertEquals(2, allColorsInDb.size)
+        assertTrue(allColorsInDb.any { it.goalId == 10L && it.yearMonth == "2026-08" && it.colorHex == "#00BCD4" })
+        assertTrue(allColorsInDb.any { it.goalId == 20L && it.yearMonth == "2026-10" && it.colorHex == "#FF5722" })
+    }
+
+    @Test
+    fun testRepeatingLegacyRestore_idempotentWithoutDuplicationOrRecordLoss() = runBlocking {
+        // Construct realistic legacy backup with 2 goals spanning across 3 months
+        val backupJson = JSONObject().apply {
+            put("tasks", JSONArray())
+            val goalsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("id", 1L)
+                    put("name", "Deep Work")
+                    put("dailyTargetMinutes", 120)
+                    put("colorHex", "#3F51B5")
+                    put("iconName", "work")
+                    put("startDate", "2026-07-01")
+                    put("isArchived", false)
+                    put("createdAt", 1720000000000L)
+                    put("orderIndex", 0)
+                })
+                put(JSONObject().apply {
+                    put("id", 2L)
+                    put("name", "Reading")
+                    put("dailyTargetMinutes", 30)
+                    put("colorHex", "#4CAF50")
+                    put("iconName", "book")
+                    put("startDate", "2026-08-01")
+                    put("isArchived", false)
+                    put("createdAt", 1722470400000L)
+                    put("orderIndex", 1)
+                })
+            }
+            put("timeGoals", goalsArr)
+
+            val recordsArr = JSONArray().apply {
+                // Deep Work has records in July, August, and September
+                put(JSONObject().apply {
+                    put("id", 1001L)
+                    put("goalId", 1L)
+                    put("date", "2026-07-10")
+                    put("actualMinutes", 120)
+                    put("note", "July sprint")
+                    put("updatedAt", 1720600000000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 1002L)
+                    put("goalId", 1L)
+                    put("date", "2026-08-10")
+                    put("actualMinutes", 90)
+                    put("note", "August focus")
+                    put("updatedAt", 1723300000000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 1003L)
+                    put("goalId", 1L)
+                    put("date", "2026-09-10")
+                    put("actualMinutes", 110)
+                    put("note", "September refactor")
+                    put("updatedAt", 1725900000000L)
+                })
+                // Reading has records in August and September, plus a month color in September
+                put(JSONObject().apply {
+                    put("id", 1004L)
+                    put("goalId", 2L)
+                    put("date", "2026-08-20")
+                    put("actualMinutes", 30)
+                    put("note", "August book")
+                    put("updatedAt", 1724100000000L)
+                })
+                put(JSONObject().apply {
+                    put("id", 1005L)
+                    put("goalId", 2L)
+                    put("date", "2026-09-20")
+                    put("actualMinutes", 45)
+                    put("note", "September book")
+                    put("updatedAt", 1726800000000L)
+                })
+            }
+            put("timeGoalRecords", recordsArr)
+
+            val monthColorsArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("goalId", 2L)
+                    put("yearMonth", "2026-09")
+                    put("colorHex", "#E91E63")
+                    put("updatedAt", 1726800000000L)
+                })
+            }
+            put("timeGoalMonthColors", monthColorsArr)
+            put("preferences", JSONObject())
+        }
+
+        val payloadBytes = backupJson.toString().toByteArray(Charsets.UTF_8)
+        val digest = MessageDigest.getInstance("SHA-256")
+        val checksum = digest.digest(payloadBytes).joinToString("") { "%02x".format(it) }
+
+        val manifest = JSONObject().apply {
+            put("formatVersion", NudgeBackupManager.BACKUP_FORMAT_VERSION)
+            put("app", NudgeBackupManager.APP_IDENTIFIER)
+            put("schemaVersion", 7)
+            put("timestamp", System.currentTimeMillis())
+            put("payloadChecksum", checksum)
+            put("tasksCount", 0)
+            put("timeGoalsCount", 2)
+            put("timeGoalRecordsCount", 5)
+            put("attachmentsCount", 0)
+        }
+
+        val byteOut = ByteArrayOutputStream()
+        ZipOutputStream(byteOut).use { zos ->
+            zos.putNextEntry(ZipEntry(NudgeBackupManager.MANIFEST_ENTRY_NAME))
+            zos.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry(NudgeBackupManager.PAYLOAD_ENTRY_NAME))
+            zos.write(payloadBytes)
+            zos.closeEntry()
+        }
+
+        val backupBytes = byteOut.toByteArray()
+        val prefs = context.getSharedPreferences("test_repeat_prefs", Context.MODE_PRIVATE)
+
+        // First restore
+        val val1 = NudgeBackupManager.validateBackupBytes(backupBytes)
+        assertTrue(val1.isValid)
+        NudgeBackupManager.restoreValidatedBackup(context, val1, db, prefs)
+
+        val recordsCountAfterFirst = dao.getAllRecordsList().size
+        assertEquals(5, recordsCountAfterFirst)
+
+        // Switching between months: check queries
+        val julGoals = dao.getActiveGoalsForMonth("2026-07").first()
+        assertEquals(1, julGoals.size)
+        assertEquals("Deep Work", julGoals[0].name)
+
+        val augGoals = dao.getActiveGoalsForMonth("2026-08").first()
+        assertEquals(2, augGoals.size)
+        assertTrue(augGoals.any { it.name == "Deep Work" })
+        assertTrue(augGoals.any { it.name == "Reading" })
+
+        val sepGoals = dao.getActiveGoalsForMonth("2026-09").first()
+        assertEquals(2, sepGoals.size)
+        assertTrue(sepGoals.any { it.name == "Deep Work" })
+        assertTrue(sepGoals.any { it.name == "Reading" })
+
+        // Check month color was preserved and associated with September Reading goal
+        val sepReadingGoal = sepGoals.first { it.name == "Reading" }
+        val sepColor = dao.getMonthColor(sepReadingGoal.id, "2026-09")
+        assertNotNull(sepColor)
+        assertEquals("#E91E63", sepColor?.colorHex)
+
+        // Second restore (repeating restore with same backup)
+        val val2 = NudgeBackupManager.validateBackupBytes(backupBytes)
+        assertTrue(val2.isValid)
+        NudgeBackupManager.restoreValidatedBackup(context, val2, db, prefs)
+
+        // Verify no duplicate records created after second restore
+        val recordsCountAfterSecond = dao.getAllRecordsList().size
+        assertEquals(5, recordsCountAfterSecond)
+
+        // Verify month scoping still behaves consistently
+        val julGoals2 = dao.getActiveGoalsForMonth("2026-07").first()
+        assertEquals(1, julGoals2.size)
+        assertEquals("Deep Work", julGoals2[0].name)
+
+        val augGoals2 = dao.getActiveGoalsForMonth("2026-08").first()
+        assertEquals(2, augGoals2.size)
+
+        val sepGoals2 = dao.getActiveGoalsForMonth("2026-09").first()
+        assertEquals(2, sepGoals2.size)
+    }
 }
 
