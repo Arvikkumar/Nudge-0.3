@@ -2122,7 +2122,7 @@ fun DeepDiveConfigSheet(
                                 color = if (isOneShot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "One short beep, then stop.",
+                                text = "One short beep",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp
@@ -2180,7 +2180,7 @@ fun DeepDiveConfigSheet(
                                 color = if (isFullRingtone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Full alarm until dismissed.",
+                                text = "Full alarm tone once.",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp

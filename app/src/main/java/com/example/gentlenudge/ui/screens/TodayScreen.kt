@@ -62,6 +62,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
 import com.example.gentlenudge.R
 import com.example.gentlenudge.data.events.NudgeCalendarEvent
 import com.example.gentlenudge.data.model.NudgeTask
@@ -88,7 +90,7 @@ fun TodayScreen(
     laterTasks: List<NudgeTask>,
     allTasks: List<NudgeTask> = emptyList(),
     allTimeGoals: List<TimeGoal> = emptyList(),
-    allTimeGoalRecords: List<TimeGoalRecord> = emptyList(),
+    allTimeGoalRecordsFlow: StateFlow<List<TimeGoalRecord>>? = null,
     monthColorsMap: Map<Pair<Long, String>, String> = emptyMap(),
     currentDateMillis: Long = System.currentTimeMillis(),
     onToggleDone: (NudgeTask) -> Unit,
@@ -398,6 +400,11 @@ fun TodayScreen(
     // Day Overview Screen / Sheet
     val overviewCal = showDayOverviewCalendar
     if (overviewCal != null) {
+        val allTimeGoalRecords = if (allTimeGoalRecordsFlow != null) {
+            allTimeGoalRecordsFlow.collectAsStateWithLifecycle().value
+        } else {
+            emptyList()
+        }
         DayOverviewSheet(
             initialCalendar = overviewCal,
             allTasks = allTasks,

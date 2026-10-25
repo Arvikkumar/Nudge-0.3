@@ -342,4 +342,74 @@ class NudgeEventNotificationSchedulerTest {
 
         assertEquals(3, NudgeEventNotificationScheduler.getCustomNotificationDays(context))
     }
+
+    @Test
+    fun testSetOnEventDayDefaultTime() {
+        NudgeEventNotificationScheduler.setEventNotificationSetting(
+            context = context,
+            mode = EventNotificationMode.ON_EVENT_DAY
+        )
+
+        val mode = NudgeEventNotificationScheduler.getEventNotificationMode(context)
+        val days = NudgeEventNotificationScheduler.getEventNotificationDays(context)
+        val hour = NudgeEventNotificationScheduler.getEventNotificationHour(context)
+        val minute = NudgeEventNotificationScheduler.getEventNotificationMinute(context)
+
+        assertEquals(EventNotificationMode.ON_EVENT_DAY, mode)
+        assertEquals(0, days)
+        assertEquals(9, hour)
+        assertEquals(0, minute)
+    }
+
+    @Test
+    fun testSetOnEventDayConfiguredTime() {
+        NudgeEventNotificationScheduler.setEventNotificationSetting(
+            context = context,
+            mode = EventNotificationMode.ON_EVENT_DAY,
+            customHour = 6,
+            customMinute = 0
+        )
+
+        val mode = NudgeEventNotificationScheduler.getEventNotificationMode(context)
+        val days = NudgeEventNotificationScheduler.getEventNotificationDays(context)
+        val hour = NudgeEventNotificationScheduler.getEventNotificationHour(context)
+        val minute = NudgeEventNotificationScheduler.getEventNotificationMinute(context)
+
+        assertEquals(EventNotificationMode.ON_EVENT_DAY, mode)
+        assertEquals(0, days)
+        assertEquals(6, hour)
+        assertEquals(0, minute)
+    }
+
+    @Test
+    fun testSwitchingModeClearsDeliveredSetForSameDayDelivery() {
+        // Mark an event delivered under 1 day before
+        val reminderKey = NudgeEventNotificationScheduler.getEventReminderKey("diwali", 2026, 11, 8)
+        NudgeEventNotificationScheduler.setEventNotificationSetting(
+            context = context,
+            mode = EventNotificationMode.ONE_DAY_BEFORE
+        )
+        NudgeEventNotificationScheduler.markEventReminderDelivered(context, reminderKey)
+        assertEquals(true, NudgeEventNotificationScheduler.isEventReminderDelivered(context, reminderKey))
+
+        // Switch to ON_EVENT_DAY mode
+        NudgeEventNotificationScheduler.setEventNotificationSetting(
+            context = context,
+            mode = EventNotificationMode.ON_EVENT_DAY,
+            customHour = 6,
+            customMinute = 0
+        )
+
+        // Delivered set must be cleared on mode switch so the same-day notification can be scheduled
+        assertEquals(false, NudgeEventNotificationScheduler.isEventReminderDelivered(context, reminderKey))
+    }
+
+    @Test
+    fun testOnEventDayFromStringAndDisplayName() {
+        assertEquals(EventNotificationMode.ON_EVENT_DAY, EventNotificationMode.fromString("ON_EVENT_DAY"))
+        assertEquals(EventNotificationMode.ON_EVENT_DAY, EventNotificationMode.fromString("on_event_day"))
+        assertEquals("On the event day", EventNotificationMode.ON_EVENT_DAY.displayName)
+        assertEquals(0, EventNotificationMode.ON_EVENT_DAY.defaultDays)
+    }
 }
+

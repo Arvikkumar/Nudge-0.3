@@ -182,6 +182,56 @@ fun calculateTimeRemainingText(
     return if (parts.isNotEmpty()) "in ${parts.joinToString(" ")}" else "in less than a minute"
 }
 
+/**
+ * Validates whether a task's scheduled date and time is valid to be saved.
+ * - One-time tasks with an elapsed time (> 60s ago) on "Today" are blocked with:
+ *   "This time has already passed today. Choose a future time or schedule it for tomorrow."
+ * - One-time tasks on past custom dates are blocked with:
+ *   "Please choose a future time for this nudge."
+ * - Existing tasks whose schedule (date, time, repeat) is unchanged are permitted to be saved,
+ *   allowing non-scheduling fields (title, notes, priority, etc.) to be edited without error.
+ * - Recurring tasks and future one-time tasks are permitted.
+ */
+fun validateTaskSchedule(
+    dateLabel: String,
+    timeLabel: String,
+    repeatRule: String,
+    existingTask: NudgeTask? = null,
+    now: Long = System.currentTimeMillis()
+): String? {
+    val existingIsRepeating = existingTask != null &&
+        existingTask.repeat.isNotBlank() &&
+        !existingTask.repeat.equals("Does not repeat", ignoreCase = true) &&
+        !existingTask.repeat.equals("Once", ignoreCase = true)
+
+    val newIsRepeating = repeatRule.isNotBlank() &&
+        !repeatRule.equals("Does not repeat", ignoreCase = true) &&
+        !repeatRule.equals("Once", ignoreCase = true)
+
+    val isScheduleUnchanged = existingTask != null &&
+        existingTask.dateLabel.trim().equals(dateLabel.trim(), ignoreCase = true) &&
+        existingTask.timeLabel.trim().equals(timeLabel.trim(), ignoreCase = true) &&
+        (existingTask.repeat.trim().equals(repeatRule.trim(), ignoreCase = true) || (!existingIsRepeating && !newIsRepeating))
+
+    if (isScheduleUnchanged) {
+        return null
+    }
+
+    if (newIsRepeating) {
+        return null
+    }
+
+    val triggerMillis = NudgeAlarmScheduler.calculateNextOccurrenceMillis(dateLabel, timeLabel, repeatRule, now)
+    if (triggerMillis < now - 60000L) {
+        return if (dateLabel.trim().equals("Today", ignoreCase = true)) {
+            "This time has already passed today. Choose a future time or schedule it for tomorrow."
+        } else {
+            "Please choose a future time for this nudge."
+        }
+    }
+    return null
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ComposerSheet(
@@ -2295,12 +2345,15 @@ fun ComposerSheet(
                             return@Button
                         }
                         val now = System.currentTimeMillis()
-                        val triggerMillis = NudgeAlarmScheduler.calculateNextOccurrenceMillis(selectedDate, selectedTime, selectedRepeat, now)
-                        // Validate past time for specific date/time (allow Today/Tonight and repeating tasks to be scheduled for next occurrence)
-                        val isPastForToday = (selectedDate.equals("Today", ignoreCase = true) || selectedDate.equals("Tonight", ignoreCase = true))
-                        val isRepeating = selectedRepeat.isNotBlank() && !selectedRepeat.equals("Does not repeat", ignoreCase = true) && !selectedRepeat.equals("Once", ignoreCase = true)
-                        if (triggerMillis < now - 60000L && !isPastForToday && !isRepeating) {
-                            validationError = "Please choose a future time for this nudge."
+                        val scheduleError = validateTaskSchedule(
+                            dateLabel = selectedDate,
+                            timeLabel = selectedTime,
+                            repeatRule = selectedRepeat,
+                            existingTask = existingTask,
+                            now = now
+                        )
+                        if (scheduleError != null) {
+                            validationError = scheduleError
                             return@Button
                         }
                         validationError = null

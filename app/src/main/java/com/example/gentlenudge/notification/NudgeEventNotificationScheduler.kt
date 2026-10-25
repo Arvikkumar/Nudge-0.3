@@ -13,6 +13,7 @@ import java.util.Locale
 
 enum class EventNotificationMode(val displayName: String, val defaultDays: Int) {
     OFF("Off", 0),
+    ON_EVENT_DAY("On the event day", 0),
     ONE_DAY_BEFORE("1 day before", 1),
     TWO_DAYS_BEFORE("2 days before", 2),
     CUSTOM("Custom", 3);
@@ -128,6 +129,7 @@ object NudgeEventNotificationScheduler {
         val mode = getEventNotificationMode(context)
         return when (mode) {
             EventNotificationMode.OFF -> 0
+            EventNotificationMode.ON_EVENT_DAY -> 0
             EventNotificationMode.ONE_DAY_BEFORE -> 1
             EventNotificationMode.TWO_DAYS_BEFORE -> 2
             EventNotificationMode.CUSTOM -> getCustomNotificationDays(context)
@@ -150,7 +152,7 @@ object NudgeEventNotificationScheduler {
 
     fun getEventNotificationHour(context: Context): Int {
         val mode = getEventNotificationMode(context)
-        return if (mode == EventNotificationMode.CUSTOM) {
+        return if (mode == EventNotificationMode.CUSTOM || mode == EventNotificationMode.ON_EVENT_DAY) {
             getCustomNotificationHour(context)
         } else {
             DEFAULT_NOTIFICATION_HOUR
@@ -159,7 +161,7 @@ object NudgeEventNotificationScheduler {
 
     fun getEventNotificationMinute(context: Context): Int {
         val mode = getEventNotificationMode(context)
-        return if (mode == EventNotificationMode.CUSTOM) {
+        return if (mode == EventNotificationMode.CUSTOM || mode == EventNotificationMode.ON_EVENT_DAY) {
             getCustomNotificationMinute(context)
         } else {
             DEFAULT_NOTIFICATION_MINUTE
@@ -197,12 +199,14 @@ object NudgeEventNotificationScheduler {
         customMinute: Int = DEFAULT_NOTIFICATION_MINUTE
     ) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val oldMode = getEventNotificationMode(context)
         val safeCustomDays = if (customDays in 1..30) customDays else 3
         val safeCustomHour = if (customHour in 0..23) customHour else DEFAULT_NOTIFICATION_HOUR
         val safeCustomMinute = if (customMinute in 0..59) customMinute else DEFAULT_NOTIFICATION_MINUTE
 
         val finalDays = when (mode) {
             EventNotificationMode.OFF -> 0
+            EventNotificationMode.ON_EVENT_DAY -> 0
             EventNotificationMode.ONE_DAY_BEFORE -> 1
             EventNotificationMode.TWO_DAYS_BEFORE -> 2
             EventNotificationMode.CUSTOM -> safeCustomDays
@@ -213,7 +217,7 @@ object NudgeEventNotificationScheduler {
             .putInt(KEY_EVENT_NOTIF_DAYS, finalDays)
             .putInt(KEY_CUSTOM_EVENT_NOTIF_DAYS, safeCustomDays)
 
-        if (mode == EventNotificationMode.CUSTOM) {
+        if (mode == EventNotificationMode.CUSTOM || mode == EventNotificationMode.ON_EVENT_DAY) {
             editor.putInt(KEY_EVENT_NOTIF_HOUR, safeCustomHour)
             editor.putInt(KEY_EVENT_NOTIF_MINUTE, safeCustomMinute)
         }
@@ -223,9 +227,14 @@ object NudgeEventNotificationScheduler {
         // Always cancel previous alarms first to avoid duplicate or orphaned schedules
         cancelAllEventNotifications(context)
 
+        // Clear delivered set on mode switch to ensure expected same-day or newly chosen mode notifications deliver properly
+        if (oldMode != mode) {
+            clearDeliveredEventReminders(context)
+        }
+
         if (mode != EventNotificationMode.OFF) {
-            val targetHour = if (mode == EventNotificationMode.CUSTOM) safeCustomHour else DEFAULT_NOTIFICATION_HOUR
-            val targetMinute = if (mode == EventNotificationMode.CUSTOM) safeCustomMinute else DEFAULT_NOTIFICATION_MINUTE
+            val targetHour = if (mode == EventNotificationMode.CUSTOM || mode == EventNotificationMode.ON_EVENT_DAY) safeCustomHour else DEFAULT_NOTIFICATION_HOUR
+            val targetMinute = if (mode == EventNotificationMode.CUSTOM || mode == EventNotificationMode.ON_EVENT_DAY) safeCustomMinute else DEFAULT_NOTIFICATION_MINUTE
             scheduleAllEventNotifications(
                 context = context,
                 daysBefore = finalDays,
@@ -254,7 +263,8 @@ object NudgeEventNotificationScheduler {
         notifMinute: Int = getEventNotificationMinute(context),
         lookaheadDays: Int = 90
     ) {
-        if (daysBefore <= 0) {
+        val mode = getEventNotificationMode(context)
+        if (mode == EventNotificationMode.OFF || (mode != EventNotificationMode.ON_EVENT_DAY && daysBefore < 0)) {
             cancelAllEventNotifications(context)
             return
         }

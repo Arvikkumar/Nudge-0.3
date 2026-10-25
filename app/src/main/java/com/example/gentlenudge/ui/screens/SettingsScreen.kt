@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
@@ -55,8 +56,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -133,6 +137,7 @@ fun SettingsScreen(
 
     var showAutoScheduleDialog by remember { mutableStateOf(false) }
     var showDestinationDialog by remember { mutableStateOf(false) }
+    var showSnoozeDialog by remember { mutableStateOf(false) }
     var isAlertsExpanded by rememberSaveable { mutableStateOf(false) }
     var isBackupExpanded by rememberSaveable { mutableStateOf(false) }
     var isHistoryExpanded by rememberSaveable { mutableStateOf(false) }
@@ -229,14 +234,7 @@ fun SettingsScreen(
                         description = "A little breathing room",
                         actionText = "$defaultSnooze ⌵",
                         onClick = {
-                            val next = when (defaultSnooze) {
-                                "15 minutes" -> "30 minutes"
-                                "30 minutes" -> "1 hour"
-                                "1 hour" -> "Tomorrow"
-                                else -> "15 minutes"
-                            }
-                            onSelectSnooze(next)
-                            onShowToast("Default snooze set to $next.")
+                            showSnoozeDialog = true
                         }
                     )
 
@@ -791,6 +789,275 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDestinationDialog = false }) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        )
+    }
+
+    // Dialog: Default Snooze with Presets and Custom Hours & Minutes
+    if (showSnoozeDialog) {
+        val quickPresets = listOf("15 minutes", "30 minutes", "1 hour", "Tomorrow")
+        var selectedPreset by remember {
+            mutableStateOf(if (defaultSnooze in quickPresets) defaultSnooze else null)
+        }
+        var isCustomMode by remember {
+            mutableStateOf(selectedPreset == null)
+        }
+
+        var hoursInput by remember {
+            val initialHours = if (selectedPreset == null) {
+                val hMatch = Regex("""(\d+)\s*(?:hours?|hrs?|h)\b""", RegexOption.IGNORE_CASE).find(defaultSnooze)
+                hMatch?.groupValues?.get(1) ?: ""
+            } else ""
+            mutableStateOf(initialHours)
+        }
+
+        var minutesInput by remember {
+            val initialMinutes = if (selectedPreset == null) {
+                val mMatch = Regex("""(\d+)\s*(?:minutes?|mins?|m)\b""", RegexOption.IGNORE_CASE).find(defaultSnooze)
+                mMatch?.groupValues?.get(1) ?: run {
+                    val plain = defaultSnooze.trim().toLongOrNull()
+                    if (plain != null) plain.toString() else ""
+                }
+            } else ""
+            mutableStateOf(initialMinutes)
+        }
+
+        val parsedHours = hoursInput.trim().toLongOrNull() ?: 0L
+        val parsedMinutes = minutesInput.trim().toLongOrNull() ?: 0L
+        val totalMinutes = parsedHours * 60L + parsedMinutes
+
+        val isCustomValid = isCustomMode && totalMinutes in 1L..1440L && parsedHours >= 0L && parsedMinutes >= 0L
+        val isPresetValid = !isCustomMode && selectedPreset != null
+        val canSave = isPresetValid || isCustomValid
+
+        val previewText = when {
+            !isCustomMode && selectedPreset == "Tomorrow" -> "Snooze until tomorrow at 9:00 AM"
+            !isCustomMode && selectedPreset != null -> "Snooze for $selectedPreset"
+            isCustomMode && totalMinutes in 1L..1440L -> {
+                val parts = mutableListOf<String>()
+                if (parsedHours > 0L) {
+                    parts.add("$parsedHours hour${if (parsedHours > 1L) "s" else ""}")
+                }
+                if (parsedMinutes > 0L) {
+                    parts.add("$parsedMinutes minute${if (parsedMinutes > 1L) "s" else ""}")
+                }
+                "Snooze for " + parts.joinToString(" ")
+            }
+            isCustomMode && totalMinutes == 0L -> "Duration must be at least 1 minute"
+            isCustomMode && totalMinutes > 1440L -> "Duration cannot exceed 24 hours"
+            else -> "Select or enter a snooze duration"
+        }
+
+        AlertDialog(
+            modifier = Modifier.testTag("snooze_dialog"),
+            onDismissRequest = { showSnoozeDialog = false },
+            title = {
+                Text(
+                    text = "Default Snooze",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Choose a quick option or enter a custom duration:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Quick presets section
+                    Text(
+                        text = "Quick Presets",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = NudgeBlue
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        quickPresets.forEach { preset ->
+                            val isSelected = !isCustomMode && selectedPreset == preset
+                            val chipLabel = when (preset) {
+                                "15 minutes" -> "15m"
+                                "30 minutes" -> "30m"
+                                "1 hour" -> "1h"
+                                "Tomorrow" -> "Tomorrow"
+                                else -> preset
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) NudgeBlue else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                contentColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        selectedPreset = preset
+                                        isCustomMode = false
+                                    }
+                                    .testTag("snooze_preset_${preset.replace(" ", "_").lowercase()}")
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 2.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = chipLabel,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        ),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+                    // Custom duration header & radio
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { isCustomMode = true },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isCustomMode,
+                            onClick = { isCustomMode = true },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = NudgeBlue,
+                                unselectedColor = MaterialTheme.colorScheme.outline
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Custom Duration",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (isCustomMode) FontWeight.SemiBold else FontWeight.Normal
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = hoursInput,
+                            onValueChange = { input ->
+                                if (input.all { it.isDigit() } && input.length <= 2) {
+                                    hoursInput = input
+                                    isCustomMode = true
+                                    selectedPreset = null
+                                }
+                            },
+                            label = { Text("Hours") },
+                            placeholder = { Text("0") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("snooze_hours_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = NudgeBlue,
+                                focusedLabelColor = NudgeBlue
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = minutesInput,
+                            onValueChange = { input ->
+                                if (input.all { it.isDigit() } && input.length <= 4) {
+                                    minutesInput = input
+                                    isCustomMode = true
+                                    selectedPreset = null
+                                }
+                            },
+                            label = { Text("Minutes") },
+                            placeholder = { Text("0") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("snooze_minutes_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = NudgeBlue,
+                                focusedLabelColor = NudgeBlue
+                            )
+                        )
+                    }
+
+                    // Live preview container
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (canSave) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                               else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.AccessTime,
+                                contentDescription = null,
+                                tint = if (canSave) NudgeBlue else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = previewText,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                color = if (canSave) MaterialTheme.colorScheme.onPrimaryContainer
+                                       else MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val resultString = if (!isCustomMode && selectedPreset != null) {
+                            selectedPreset!!
+                        } else {
+                            val parts = mutableListOf<String>()
+                            if (parsedHours > 0L) {
+                                parts.add("$parsedHours hour${if (parsedHours > 1L) "s" else ""}")
+                            }
+                            if (parsedMinutes > 0L) {
+                                parts.add("$parsedMinutes minute${if (parsedMinutes > 1L) "s" else ""}")
+                            }
+                            parts.joinToString(" ")
+                        }
+                        if (resultString.isNotBlank()) {
+                            onSelectSnooze(resultString)
+                            onShowToast("Default snooze set to $resultString.")
+                        }
+                        showSnoozeDialog = false
+                    },
+                    enabled = canSave,
+                    modifier = Modifier.testTag("snooze_save_button")
+                ) {
+                    Text(
+                        "Save",
+                        color = if (canSave) NudgeBlue else MaterialTheme.colorScheme.outline,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showSnoozeDialog = false },
+                    modifier = Modifier.testTag("snooze_cancel_button")
+                ) {
                     Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

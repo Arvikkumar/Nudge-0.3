@@ -131,7 +131,6 @@ fun MainScreen(
     val defaultSnooze by viewModel.defaultSnooze.collectAsStateWithLifecycle()
     val userName by viewModel.userName.collectAsStateWithLifecycle()
     val allTimeGoals by viewModel.allTimeGoals.collectAsStateWithLifecycle()
-    val allTimeGoalRecords by viewModel.allTimeGoalRecords.collectAsStateWithLifecycle()
     val monthColorsMap by viewModel.monthColorsMap.collectAsStateWithLifecycle()
     val deletedTasks by viewModel.deletedTasks.collectAsStateWithLifecycle()
     val deletedTasksCount by viewModel.deletedTasksCount.collectAsStateWithLifecycle()
@@ -510,7 +509,7 @@ fun MainScreen(
                         laterTasks = laterTasks,
                         allTasks = allTasks,
                         allTimeGoals = allTimeGoals,
-                        allTimeGoalRecords = allTimeGoalRecords,
+                        allTimeGoalRecordsFlow = viewModel.allTimeGoalRecords,
                         monthColorsMap = monthColorsMap,
                         currentDateMillis = currentDateMillis,
                         onToggleDone = { viewModel.toggleDone(it) },

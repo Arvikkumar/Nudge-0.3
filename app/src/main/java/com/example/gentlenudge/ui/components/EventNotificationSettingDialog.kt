@@ -195,7 +195,19 @@ fun EventNotificationSettingDialog(
                     testTag = "event_reminder_opt_off"
                 )
 
-                // Option 2: 1 DAY BEFORE
+                // Option 2: ON THE EVENT DAY
+                EventOptionCard(
+                    title = "On the event day",
+                    description = "Notify on the actual date of every upcoming event",
+                    isSelected = selectedMode == EventNotificationMode.ON_EVENT_DAY,
+                    onClick = {
+                        selectedMode = EventNotificationMode.ON_EVENT_DAY
+                        checkAndRequestPermissionIfNeeded()
+                    },
+                    testTag = "event_reminder_opt_same_day"
+                )
+
+                // Option 3: 1 DAY BEFORE
                 EventOptionCard(
                     title = "1 day before",
                     description = "Notify 1 day before every upcoming event",
@@ -207,7 +219,7 @@ fun EventNotificationSettingDialog(
                     testTag = "event_reminder_opt_1day"
                 )
 
-                // Option 3: 2 DAYS BEFORE
+                // Option 4: 2 DAYS BEFORE
                 EventOptionCard(
                     title = "2 days before",
                     description = "Notify 2 days before every upcoming event",
@@ -219,7 +231,7 @@ fun EventNotificationSettingDialog(
                     testTag = "event_reminder_opt_2days"
                 )
 
-                // Option 4: CUSTOM
+                // Option 5: CUSTOM
                 EventOptionCard(
                     title = "Custom",
                     description = "Choose number of days before every event",
@@ -231,9 +243,9 @@ fun EventNotificationSettingDialog(
                     testTag = "event_reminder_opt_custom"
                 )
 
-                // Custom Days Stepper
+                // Custom Settings & Notification Time
                 AnimatedVisibility(
-                    visible = selectedMode == EventNotificationMode.CUSTOM,
+                    visible = selectedMode == EventNotificationMode.CUSTOM || selectedMode == EventNotificationMode.ON_EVENT_DAY,
                     enter = fadeIn() + expandVertically(),
                     exit = fadeOut() + shrinkVertically()
                 ) {
@@ -251,93 +263,95 @@ fun EventNotificationSettingDialog(
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Remind in advance:",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-
+                            if (selectedMode == EventNotificationMode.CUSTOM) {
                                 Row(
+                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (customDays > 1) NudgeBlue.copy(alpha = 0.12f)
-                                                else MaterialTheme.colorScheme.surfaceVariant
-                                            )
-                                            .clickable(
-                                                enabled = customDays > 1,
-                                                onClick = {
-                                                    if (customDays > 1) {
-                                                        customDays = customDays - 1
-                                                    }
-                                                }
-                                            )
-                                            .testTag("custom_days_minus"),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Remove,
-                                            contentDescription = "Decrease days",
-                                            modifier = Modifier.size(20.dp),
-                                            tint = if (customDays > 1) NudgeBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                        )
-                                    }
+                                    Text(
+                                        text = "Remind in advance:",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
 
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = MaterialTheme.colorScheme.surface,
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                        modifier = Modifier.padding(horizontal = 1.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text(
-                                            text = "$customDays ${if (customDays == 1) "day" else "days"}",
-                                            style = MaterialTheme.typography.labelLarge.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp
-                                            ),
-                                            color = NudgeBlue,
+                                        Box(
                                             modifier = Modifier
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                                .testTag("custom_days_text")
-                                        )
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (customDays < 30) NudgeBlue.copy(alpha = 0.12f)
-                                                else MaterialTheme.colorScheme.surfaceVariant
-                                            )
-                                            .clickable(
-                                                enabled = customDays < 30,
-                                                onClick = {
-                                                    if (customDays < 30) {
-                                                        customDays = customDays + 1
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (customDays > 1) NudgeBlue.copy(alpha = 0.12f)
+                                                    else MaterialTheme.colorScheme.surfaceVariant
+                                                )
+                                                .clickable(
+                                                    enabled = customDays > 1,
+                                                    onClick = {
+                                                        if (customDays > 1) {
+                                                            customDays = customDays - 1
+                                                        }
                                                     }
-                                                }
+                                                )
+                                                .testTag("custom_days_minus"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Remove,
+                                                contentDescription = "Decrease days",
+                                                modifier = Modifier.size(20.dp),
+                                                tint = if (customDays > 1) NudgeBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                                             )
-                                            .testTag("custom_days_plus"),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = "Increase days",
-                                            modifier = Modifier.size(20.dp),
-                                            tint = if (customDays < 30) NudgeBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                        )
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surface,
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                            modifier = Modifier.padding(horizontal = 1.dp)
+                                        ) {
+                                            Text(
+                                                text = "$customDays ${if (customDays == 1) "day" else "days"}",
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp
+                                                ),
+                                                color = NudgeBlue,
+                                                modifier = Modifier
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    .testTag("custom_days_text")
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (customDays < 30) NudgeBlue.copy(alpha = 0.12f)
+                                                    else MaterialTheme.colorScheme.surfaceVariant
+                                                )
+                                                .clickable(
+                                                    enabled = customDays < 30,
+                                                    onClick = {
+                                                        if (customDays < 30) {
+                                                            customDays = customDays + 1
+                                                        }
+                                                    }
+                                                )
+                                                .testTag("custom_days_plus"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "Increase days",
+                                                modifier = Modifier.size(20.dp),
+                                                tint = if (customDays < 30) NudgeBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -399,6 +413,7 @@ fun EventNotificationSettingDialog(
                     }
                     val finalDays = when (selectedMode) {
                         EventNotificationMode.OFF -> 0
+                        EventNotificationMode.ON_EVENT_DAY -> 0
                         EventNotificationMode.ONE_DAY_BEFORE -> 1
                         EventNotificationMode.TWO_DAYS_BEFORE -> 2
                         EventNotificationMode.CUSTOM -> customDays

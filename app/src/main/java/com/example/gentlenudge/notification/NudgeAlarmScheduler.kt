@@ -559,21 +559,66 @@ object NudgeAlarmScheduler {
         return null
     }
 
+    /**
+     * Parses a human-readable snooze duration string into minutes.
+     * Supports formats like:
+     * - "10 minutes", "25 minutes", "45 minutes", "30 mins", "15m"
+     * - "2 hours", "1 hour", "1 hr", "2h"
+     * - "1 hour 30 minutes", "1 hour and 30 minutes", "1h 30m"
+     * - Plain integer strings: "20", "45"
+     *
+     * Returns null if unparseable or outside the allowed range of 1 minute to 24 hours (1440 minutes).
+     */
+    fun parseSnoozeDurationMinutes(duration: String): Long? {
+        val clean = duration.lowercase().trim()
+        if (clean.isEmpty() || clean.contains("-")) return null
+        if (clean == "tomorrow" || clean == "tonight") return null
+
+        val stripped = if (clean.startsWith("in ")) clean.removePrefix("in ").trim() else clean
+
+        var totalMinutes = 0L
+        var matched = false
+
+        // Match hours: e.g. "1 hour", "2 hours", "1 hr", "2 hrs", "1h"
+        val hourMatch = Regex("""(\d+)\s*(?:hours?|hrs?|h)\b""").find(stripped)
+        if (hourMatch != null) {
+            val h = hourMatch.groupValues[1].toLongOrNull() ?: return null
+            if (h > 24L) return null
+            totalMinutes += h * 60L
+            matched = true
+        }
+
+        // Match minutes: e.g. "30 minutes", "15 mins", "10 min", "45m"
+        val minMatch = Regex("""(\d+)\s*(?:minutes?|mins?|m)\b""").find(stripped)
+        if (minMatch != null) {
+            val m = minMatch.groupValues[1].toLongOrNull() ?: return null
+            if (m > 1440L) return null
+            totalMinutes += m
+            matched = true
+        }
+
+        // If no units were found, check if the string is just plain digits (e.g. "20")
+        if (!matched) {
+            val plain = stripped.toLongOrNull()
+            if (plain != null) {
+                totalMinutes = plain
+                matched = true
+            }
+        }
+
+        if (!matched) return null
+
+        // Validate range: 1 minute to 24 hours (1440 minutes)
+        if (totalMinutes !in 1L..1440L) {
+            return null
+        }
+
+        return totalMinutes
+    }
+
     fun calculateSnoozeMillis(snoozeDuration: String, now: Long = System.currentTimeMillis()): Long {
         val clean = snoozeDuration.lowercase().trim()
         return when {
-            clean == "15m" || clean == "15 min" || clean == "15 mins" || clean == "15 minutes" ||
-                    clean == "in 15m" || clean == "in 15 min" || clean == "in 15 mins" || clean == "in 15 minutes" -> {
-                now + (15 * 60 * 1000L)
-            }
-            clean == "30m" || clean == "30 min" || clean == "30 mins" || clean == "30 minutes" ||
-                    clean == "in 30m" || clean == "in 30 min" || clean == "in 30 mins" || clean == "in 30 minutes" -> {
-                now + (30 * 60 * 1000L)
-            }
-            clean == "1h" || clean == "1 hr" || clean == "1 hour" || clean == "in 1h" || clean == "in 1 hr" ||
-                    clean == "in 1 hour" || clean == "60m" || clean == "60 min" || clean == "60 mins" || clean == "60 minutes" -> {
-                now + (60 * 60 * 1000L)
-            }
             clean == "tonight" -> {
                 val cal = Calendar.getInstance().apply {
                     timeInMillis = now
@@ -595,7 +640,15 @@ object NudgeAlarmScheduler {
                 }
                 cal.timeInMillis
             }
-            else -> now + (30 * 60 * 1000L)
+            else -> {
+                val parsedMinutes = parseSnoozeDurationMinutes(clean)
+                if (parsedMinutes != null && parsedMinutes in 1L..1440L) {
+                    now + (parsedMinutes * 60 * 1000L)
+                } else {
+                    now + (30 * 60 * 1000L)
+                }
+            }
         }
     }
 }
+
